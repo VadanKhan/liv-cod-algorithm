@@ -14,8 +14,8 @@ import matplotlib.pyplot as plt
 
 # %%
 files = [
-    # "QCHWK",
-    "QCHWQ",
+    "QCHWK",
+    # "QCHWQ",
     # "QCHXD",
     # "QCHXG",
     # "QCHXL",
@@ -66,140 +66,79 @@ print(file_paths)
 # - transposes
 # - stacks data in tall format
 # - adds in device coords from decoder file
+# - loops for every csv file chosen, and stores raw_sweep dataframes
 
 # %%
 # Transforming Raw File Code
-
-
 warnings.filterwarnings("ignore")
-
 
 raw_sweeps_list = []
 
-
 for file_path in file_paths:
-
     # Read the CSV file, skipping the first 19 rows
     df = pd.read_csv(file_path, skiprows=19)
-
     # Read the CSV file again to extract the second row
-
     header_df = pd.read_csv(file_path, nrows=2)
-
     # Extract the wafer id from the second row
-
     wafer_id = header_df.iloc[1, 1]
-
     # Print the wafer id for verification
-
     print(f"Wafer ID: {wafer_id}")
-
     # Get the directory of the file
-
     folder = file_path.parent
-
     print(f"Directory: {folder}")
-
     # Get column names
     col_names = df.columns
-
     # Find columns containing "Vf" or "PD"
-
     selected_cols = [col for col in col_names if "Vf" in col or "PD" in col]
-
     # Subset the data frame with selected columns
-
     df_subset = df[selected_cols]
-
     # Find and delete columns containing "Vf@" or "PD@"
-
     cols_to_delete = [col for col in df_subset.columns if "Vf@" in col or "PD@" in col]
-
     df_subset.drop(columns=cols_to_delete, inplace=True)
-
     # Transpose the data frame
-
     df_transposed = df_subset.transpose()
-
     # Reset index to make the transposed columns into rows
-
     df_transposed.reset_index(inplace=True)
-
     # Add a new row at the top with the desired titles
-
     new_columns = ["Label"] + list(range(1, len(df_transposed.columns)))
     df_transposed.columns = new_columns
-
     df_transposed.loc[-1] = new_columns  # Add the new row at the top
     df_transposed.index = df_transposed.index + 1  # Shift the index
-
     df_transposed = df_transposed.sort_index()  # Sort by index to place the new row at the top
-
     # Display the first 10 rows of df_transposed
-
     df_transposed.head(10)
     # df_subset.head(10)
-
     # Split transposed table into Vf and PD data tables
     df_vf = df_transposed[df_transposed["Label"].str.contains("Vf")]
     df_pd = df_transposed[df_transposed["Label"].str.contains("PD")]
-
     # df_vf.head(10)
     # df_pd.head(10)
-
     # Drop the 'Label' column
     df_vf.drop(columns=["Label"], inplace=True)
     df_pd.drop(columns=["Label"], inplace=True)
-
     # learn data dimensions
-
     n_meas = df_vf.shape[0]
     print(f"Number of Current Measurements per Device: {n_meas}")
-
     n_devices = df_vf.shape[1]
     print(f"Number of Devices: {n_devices}")
-
     # Concatenate all Voltage columns into one
-
-    df_concat_vf = pd.concat([df_vf[col] for col in df_vf.columns], ignore_index=True).to_frame(
-        name="Vf"
-    )
-
+    df_concat_vf = pd.concat([df_vf[col] for col in df_vf.columns], ignore_index=True).to_frame(name="Vf")
     # Create TOUCHDOWN column
     df_concat_vf["TOUCHDOWN"] = [i // n_meas + 1 for i in range(n_meas * n_devices)]
-
     # Concatenate all PD columns into one
-    df_concat_pd = pd.concat([df_pd[col] for col in df_pd.columns], ignore_index=True).to_frame(
-        name="PD"
-    )
-
+    df_concat_pd = pd.concat([df_pd[col] for col in df_pd.columns], ignore_index=True).to_frame(name="PD")
     # Cartesian join of Vf and PD data tables
     df_raw_sweeps = pd.concat([df_concat_vf, df_concat_pd], axis=1)
-
     # df_raw_sweeps.head(270)
-
     # Add device coordinates from original RAW file
-
-    if (
-        "TOUCHDOWN" in df.columns
-        and "STX_WAFER_X_UM" in df.columns
-        and "STX_WAFER_Y_UM" in df.columns
-    ):
-        df_raw_sweeps = df_raw_sweeps.merge(
-            df[["TOUCHDOWN", "STX_WAFER_X_UM", "STX_WAFER_Y_UM"]], on="TOUCHDOWN", how="left"
-        )
+    if "TOUCHDOWN" in df.columns and "STX_WAFER_X_UM" in df.columns and "STX_WAFER_Y_UM" in df.columns:
+        df_raw_sweeps = df_raw_sweeps.merge(df[["TOUCHDOWN", "STX_WAFER_X_UM", "STX_WAFER_Y_UM"]], on="TOUCHDOWN", how="left")
     else:
-
-        print(
-            "Required columns for merging device coordinates are missing in the original RAW file."
-        )
-
+        print("Required columns for merging device coordinates are missing in the original RAW file.")
     if decoder_file_path.exists():
         df_decoder = pd.read_csv(decoder_file_path)
-
         # Update with decoder to get TE_LABEL etc.
         if "YMIN" in df_decoder.columns and "XMIN" in df_decoder.columns:
-
             df_raw_sweeps = df_raw_sweeps.merge(
                 df_decoder[["YMIN", "XMIN", "TE_LABEL", "TYPE"]],
                 left_on=["STX_WAFER_Y_UM", "STX_WAFER_X_UM"],
@@ -210,20 +149,13 @@ for file_path in file_paths:
             print("Required columns for merging decoder data are missing in the decoder file.")
     else:
         print(f"Decoder file not found at {decoder_file_path}")
-
     # Rename the columns
-
     df_raw_sweeps.rename(columns={"STX_WAFER_X_UM": "X_UM", "STX_WAFER_Y_UM": "Y_UM"}, inplace=True)
-
     # Add current column as a repeating sequence of length n_meas
-
     df_raw_sweeps["LDI_mA"] = [i % n_meas + 1 for i in range(len(df_raw_sweeps))]
-
     # Add a column for WAFER_ID with the wafer_id value repeated for every row
     df_raw_sweeps.insert(0, "WAFER_ID", wafer_id)
-
     raw_sweeps_list.append(df_raw_sweeps)
-
 
 # Display the first 10 rows of df_raw_sweeps
 # raw_sweeps_list[0].head(379500)
@@ -237,7 +169,7 @@ for file_path in file_paths:
 #  - this threshold is weighted by the mean PD
 
 # %%
-DELTA_ALGORITHM_MIN_DELTA = 0.4
+DELTA_ALGORITHM_MIN_DELTA = 1
 DELTA_ALGORITHM_MAX_PD = 1
 
 summary_tables = []
@@ -256,6 +188,7 @@ for df_raw_sweeps in raw_sweeps_list:
     df_raw_sweeps["DELTA"] = df_raw_sweeps["MEAN_PD"] - df_raw_sweeps["DP/DI"].abs()
     # Calculate MIN_DELTA
     df_raw_sweeps["MIN_DELTA"] = df_raw_sweeps.groupby(["TE_LABEL"])["DELTA"].transform("min")
+
     # MAIN CHECK OF IF COD'd
     # Calculate COD_ROLL_EVAL
     conditions = [
@@ -264,44 +197,48 @@ for df_raw_sweeps in raw_sweeps_list:
     ]
     choices = ["ROLLOVER", "NO LASER"]
     df_raw_sweeps["COD_ROLL_EVAL"] = np.select(conditions, choices, default="COD")
-    # Calculate the average of dV/dI for the current row, 2 rows ahead, and 2 rows behind
-    df_raw_sweeps["AVG_DV_DI"] = df_raw_sweeps["dV/dI"].rolling(window=5, center=True).mean()
-    # Calculate POT_FAILMODE using the average dV/dI
+
+    # # Calculate the average of dV/dI for the current row, 2 rows ahead, and 2 rows behind
+    # df_raw_sweeps["AVG_DV_DI"] = df_raw_sweeps["dV/dI"].rolling(window=5, center=True).mean()
+
+    # Calculate POT_FAILMODE using the dV/dI
     df_raw_sweeps["POT_FAILMODE"] = df_raw_sweeps["COD_ROLL_EVAL"]
-    df_raw_sweeps.loc[
-        (df_raw_sweeps["COD_ROLL_EVAL"] == "COD") & (df_raw_sweeps["dV/dI"] > 0), "POT_FAILMODE"
-    ] = "COMD"
-    df_raw_sweeps.loc[
-        (df_raw_sweeps["COD_ROLL_EVAL"] == "COD") & (df_raw_sweeps["dV/dI"] < 0), "POT_FAILMODE"
-    ] = "COBD"
+    df_raw_sweeps.loc[(df_raw_sweeps["COD_ROLL_EVAL"] == "COD") & (df_raw_sweeps["dV/dI"] > 0), "POT_FAILMODE"] = "COMD"
+    df_raw_sweeps.loc[(df_raw_sweeps["COD_ROLL_EVAL"] == "COD") & (df_raw_sweeps["dV/dI"] < 0), "POT_FAILMODE"] = "COBD"
+
     # Calculate DEV_CURR_AT_ROLLOVER
     df_raw_sweeps["DEV_CURR_AT_ROLLOVER"] = np.where(
-        (df_raw_sweeps["PD"] == df_raw_sweeps["MAX_PD"])
-        & (df_raw_sweeps["COD_ROLL_EVAL"] == "ROLLOVER"),
+        (df_raw_sweeps["PD"] == df_raw_sweeps["MAX_PD"]) & (df_raw_sweeps["COD_ROLL_EVAL"] == "ROLLOVER"),
         df_raw_sweeps["LDI_mA"],
         np.nan,
     )
     # Calculate DEV_CURR_AT_SPD
     df_raw_sweeps["DEV_CURR_AT_SPD"] = np.where(
-        (df_raw_sweeps["PD"] == df_raw_sweeps["MAX_PD"])
-        & (df_raw_sweeps["COD_ROLL_EVAL"] == "COD"),
+        (df_raw_sweeps["PD"] == df_raw_sweeps["MAX_PD"]) & (df_raw_sweeps["COD_ROLL_EVAL"] == "COD"),
         df_raw_sweeps["LDI_mA"],
         np.nan,
     )
     # Calculate CURRENT_AT_ROLLOVER
-    df_raw_sweeps["CURRENT_AT_ROLLOVER"] = df_raw_sweeps.groupby(["TE_LABEL"])[
-        "DEV_CURR_AT_ROLLOVER"
-    ].transform("median")
+    df_raw_sweeps["CURRENT_AT_ROLLOVER"] = df_raw_sweeps.groupby(["TE_LABEL"])["DEV_CURR_AT_ROLLOVER"].transform("median")
     # Calculate CURRENT_AT_SPD
-    df_raw_sweeps["CURRENT_AT_SPD"] = df_raw_sweeps.groupby(["TE_LABEL"])[
-        "DEV_CURR_AT_SPD"
-    ].transform("median")
+    df_raw_sweeps["CURRENT_AT_SPD"] = df_raw_sweeps.groupby(["TE_LABEL"])["DEV_CURR_AT_SPD"].transform("median")
     # Annotate the dV/dI value at the point of COD fail
     df_raw_sweeps["DV_DI_AT_COD"] = np.where(
         (df_raw_sweeps["COD_ROLL_EVAL"] == "COD"),
         df_raw_sweeps["dV/dI"],
         np.nan,
     )
+    # Flag lasers with multiple COD flags as 'M. COD' and single COD as 'COD'
+    cod_counts = df_raw_sweeps[df_raw_sweeps["COD_ROLL_EVAL"] == "COD"].groupby("TE_LABEL").size()
+    multiple_cod_labels = cod_counts[cod_counts > 1].index.tolist()
+
+    def flag_cod(te_label, cod_roll_eval):
+        if cod_roll_eval == "COD" and te_label in multiple_cod_labels:
+            return "M. COD"
+        return cod_roll_eval
+
+    df_raw_sweeps["COD_ROLL_EVAL"] = df_raw_sweeps.apply(lambda row: flag_cod(row["TE_LABEL"], row["COD_ROLL_EVAL"]), axis=1)
+
     # Create COD Summary table with POT_FAILMODE
     cod_summary = (
         df_raw_sweeps.groupby("TE_LABEL")
@@ -336,9 +273,7 @@ for df_raw_sweeps in raw_sweeps_list:
 
 # Save COD percentages to a CSV file
 cod_percentages_df = pd.DataFrame(cod_percentages)
-cod_percentages_df.to_csv(
-    cod_summary_file_path / f"{summaryfile_name}_cod_percentages.csv", index=False
-)
+cod_percentages_df.to_csv(cod_summary_file_path / f"{summaryfile_name}_cod_percentages.csv", index=False)
 
 
 # Plotting COD Summary for Each Wafer Code
@@ -359,51 +294,51 @@ for cod_summary in summary_tables:
     plt.title(f"{wafer_code}: Overall COD_ROLL_EVAL Results")
     plt.show()
 
-    # # Plot separate pie charts for each TYPE
-    # types = cod_summary["TYPE"].unique()
+    # Plot separate pie charts for each TYPE
+    types = cod_summary["TYPE"].unique()
 
-    # for t in types:
-    #     type_data = cod_summary[cod_summary["TYPE"] == t]
-    #     type_cod_roll_eval_counts = type_data["COD_ROLL_EVAL"].value_counts()
+    for t in types:
+        type_data = cod_summary[cod_summary["TYPE"] == t]
+        type_cod_roll_eval_counts = type_data["COD_ROLL_EVAL"].value_counts()
 
-    #     # Calculate proportions
-    #     total_count = type_cod_roll_eval_counts.sum()
-    #     cod_count = type_cod_roll_eval_counts.get("COD", 0)
-    #     nolaser_count = type_cod_roll_eval_counts.get("NO LASER", 0)
-    #     rollover_count = type_cod_roll_eval_counts.get("ROLLOVER", 0)
+        # Calculate proportions
+        total_count = type_cod_roll_eval_counts.sum()
+        cod_count = type_cod_roll_eval_counts.get("COD", 0)
+        nolaser_count = type_cod_roll_eval_counts.get("NO LASER", 0)
+        rollover_count = type_cod_roll_eval_counts.get("ROLLOVER", 0)
 
-    #     non_cod_count = total_count - cod_count
+        non_cod_count = total_count - cod_count
 
-    #     cod_proportion = (cod_count / total_count) * 100
-    #     non_cod_proportion = (non_cod_count / total_count) * 100
+        cod_proportion = (cod_count / total_count) * 100
+        non_cod_proportion = (non_cod_count / total_count) * 100
 
-    #     # Print proportions
-    #     print(f"Type: {t}")
-    #     print(f"COD: {cod_proportion:.2f}%")
-    #     print(f"Non-COD: {non_cod_proportion:.2f}%\n")
+        # Print proportions
+        print(f"Type: {t}")
+        print(f"COD: {cod_proportion:.2f}%")
+        print(f"Non-COD: {non_cod_proportion:.2f}%\n")
 
-    #     # Plot pie chart
-    #     plt.figure(figsize=(4, 4))
+        # Plot pie chart
+        plt.figure(figsize=(4, 4))
 
-    #     plt.pie(
-    #         type_cod_roll_eval_counts,
-    #         labels=type_cod_roll_eval_counts.index,
-    #         autopct="%1.5f%%",
-    #         startangle=140,
-    #     )
-    #     plt.tight_layout()
-    #     plt.title(f"{wafer_code}: COD_ROLL_EVAL Results for TYPE: {t}")
-    #     plt.show()
+        plt.pie(
+            type_cod_roll_eval_counts,
+            labels=type_cod_roll_eval_counts.index,
+            autopct="%1.5f%%",
+            startangle=140,
+        )
+        plt.tight_layout()
+        plt.title(f"{wafer_code}: COD_ROLL_EVAL Results for TYPE: {t}")
+        plt.show()
 
-    # # Proportion of Laser Types
-    # type_counts = cod_summary["TYPE"].value_counts()
-    # print("\nProportion of Types:")
-    # print(type_counts / type_counts.sum() * 100)
-    # # Plot a pie chart indicating the proportion of types
-    # plt.figure(figsize=(4, 4))
-    # plt.pie(type_counts, labels=type_counts.index, autopct="%1.5f%%", startangle=140)
-    # plt.title("Proportion of Types")
-    # plt.show()
+    # Proportion of Laser Types
+    type_counts = cod_summary["TYPE"].value_counts()
+    print("\nProportion of Types:")
+    print(type_counts / type_counts.sum() * 100)
+    # Plot a pie chart indicating the proportion of types
+    plt.figure(figsize=(4, 4))
+    plt.pie(type_counts, labels=type_counts.index, autopct="%1.5f%%", startangle=140)
+    plt.title("Proportion of Types")
+    plt.show()
 
     # Calculate the proportion of COBD to COMD
     failmode_counts = cod_summary["POT_FAILMODE"].value_counts()
@@ -479,8 +414,8 @@ for df_raw_sweeps in raw_sweeps_list:
     wafer_code = df_raw_sweeps["WAFER_ID"].iloc[0]
 
     # Scatter plot of PD against LDI_mA with subplots for each COD_ROLL_EVAL type
-    fig, axs = plt.subplots(1, 3, figsize=(18, 8))
-    cod_roll_eval_types = ["COD", "ROLLOVER", "NO LASER"]
+    fig, ax2 = plt.subplots(1, 3, figsize=(18, 4))
+    cod_roll_eval_types = ["M. COD", "ROLLOVER", "NO LASER"]
     colors = ["red", "blue", "orange"]
 
     for ax, cod_type, color in zip(axs, cod_roll_eval_types, colors):
@@ -494,8 +429,22 @@ for df_raw_sweeps in raw_sweeps_list:
     plt.tight_layout()
     plt.show()
 
+    # Plot DP/DI against LDI_mA with subplots for each COD_ROLL_EVAL type
+    fig, axs = plt.subplots(1, 3, figsize=(18, 4))
+
+    for ax, cod_type, color in zip(axs, cod_roll_eval_types, colors):
+        group = df_raw_sweeps[df_raw_sweeps["COD_ROLL_EVAL"] == cod_type]
+        ax.scatter(group["LDI_mA"], group["DP/DI"], alpha=0.8, s=0.2, color=color)
+        ax.set_title(f"Scatter Plot of DP/DI vs LDI_mA for {cod_type} (Wafer Code: {wafer_code})")
+        ax.set_xlabel("LDI_mA")
+        ax.set_ylabel("DP/DI")
+        ax.grid(True)
+
+    plt.tight_layout()
+    plt.show()
+
     # Scatter plot of Vf against LDI_mA with subplots for each COD_ROLL_EVAL type
-    fig, axs = plt.subplots(1, 3, figsize=(18, 8))
+    fig, axs = plt.subplots(1, 3, figsize=(18, 4))
 
     for ax, cod_type, color in zip(axs, cod_roll_eval_types, colors):
         group = df_raw_sweeps[df_raw_sweeps["COD_ROLL_EVAL"] == cod_type]
@@ -507,3 +456,81 @@ for df_raw_sweeps in raw_sweeps_list:
 
     plt.tight_layout()
     plt.show()
+
+    # Plot dV/dI against LDI_mA with subplots for each COD_ROLL_EVAL type
+    fig, axs = plt.subplots(1, 3, figsize=(18, 4))
+
+    for ax, cod_type, color in zip(axs, cod_roll_eval_types, colors):
+        group = df_raw_sweeps[df_raw_sweeps["COD_ROLL_EVAL"] == cod_type]
+        ax.scatter(group["LDI_mA"], group["dV/dI"], alpha=0.8, s=0.2, color=color)
+        ax.set_title(f"Scatter Plot of dV/dI vs LDI_mA for {cod_type} (Wafer Code: {wafer_code})")
+        ax.set_xlabel("LDI_mA")
+        ax.set_ylabel("dV/dI")
+        ax.grid(True)
+
+    plt.tight_layout()
+    plt.show()
+
+
+# %%
+# Function to plot PD/LDI and Vf/LDI for a specific laser and wafer
+def plot_specific_touchdown(df_raw_sweeps, wafer_code, touchdown):
+    specific_data = df_raw_sweeps[(df_raw_sweeps["WAFER_ID"] == wafer_code) & (df_raw_sweeps["TOUCHDOWN"] == touchdown)]
+
+    if specific_data.empty:
+        print(f"No data found for Wafer Code: {wafer_code} and TOUCHDOWN: {touchdown}")
+        return
+
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(18, 10))
+
+    # Plot PD/LDI
+    ax1.scatter(specific_data["LDI_mA"], specific_data["PD"], s=0.8, color="blue")
+    ax1.set_title(f"{wafer_code}: Scatter Plot of PD vs LDI_mA for TOUCHDOWN {touchdown}")
+    ax1.set_xlabel("LDI_mA")
+    ax1.set_ylabel("PD")
+    ax1.grid(True)
+
+    # Plot dP/dI
+    ax3.scatter(specific_data["LDI_mA"], specific_data["DP/DI"], s=0.8, color="blue")
+    ax3.set_title(f"{wafer_code}: Scatter Plot of dP/dI for TOUCHDOWN {touchdown}")
+    ax3.set_xlabel("LDI_mA")
+    ax3.set_ylabel("dP/dI")
+    ax3.grid(True)
+
+    # Plot Vf/LDI
+    ax2.scatter(specific_data["LDI_mA"], specific_data["Vf"], s=0.8, color="green")
+    ax2.set_title(f"{wafer_code}: Scatter Plot of Vf vs LDI_mA for TOUCHDOWN {touchdown}")
+    ax2.set_xlabel("LDI_mA")
+    ax2.set_ylabel("Vf")
+    ax2.grid(True)
+
+    # Plot dV/dI
+    ax4.scatter(specific_data["LDI_mA"], specific_data["dV/dI"], s=0.8, color="green")
+    ax4.set_title(f"{wafer_code}: Scatter Plot of dV/dI vs LDI_mA for TOUCHDOWN {touchdown}")
+    ax4.set_xlabel("LDI_mA")
+    ax4.set_ylabel("dV/dI")
+    ax4.grid(True)
+
+    plt.show()
+
+
+# Define the specific wafer code and TOUCHDOWN number
+wafer_code = "QCHWK"
+touchdown = 1288  # Replace with the desired TOUCHDOWN number
+
+# Find the correct dataframe where the wafer code matches the input
+df_raw_sweeps = None
+for df in raw_sweeps_list:
+    if df["WAFER_ID"].iloc[0] == wafer_code:
+        df_raw_sweeps = df
+        break
+
+if df_raw_sweeps is not None:
+    # Search for touchdown numbers where COD_ROLL_EVAL == COD
+    cod_touchdowns = df_raw_sweeps[(df_raw_sweeps["COD_ROLL_EVAL"] == "COD") | (df_raw_sweeps["COD_ROLL_EVAL"] == "M. COD")]["TOUCHDOWN"].unique()
+    print(f"Touchdown numbers with COD evaluation for Wafer Code {wafer_code}: {cod_touchdowns}")
+
+    # Plot for the specified touchdown number
+    plot_specific_touchdown(df_raw_sweeps, wafer_code, touchdown)
+else:
+    print(f"No data found for Wafer Code: {wafer_code}")
