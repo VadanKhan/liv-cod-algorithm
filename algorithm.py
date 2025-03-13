@@ -8,40 +8,41 @@ from pathlib import Path
 import warnings
 import numpy as np
 import matplotlib.pyplot as plt
+import requests
+from bs4 import BeautifulSoup
 
 # %% [markdown]
 # # Input Raw File and Decoder File
 
 # %%
-files = [
-    "QCHWK",
-    # "QCHWQ",
-    # "QCHXD",
-    # "QCHXG",
-    # "QCHXL",
-    # "QCHXM",
-    # "QCHXV",
-    # "QCHXW",
-    # "QCHXX",
-    # "QCHY1",
-    # "QCHY2",
-    # "QCHY6",
-    # "QCHY7",
-    # "QCHY8",
-    # "QCHYG",
-    # "QCHYH",
-    # "QCHYK",
-    # "QCHYR",
-    # "QCHYS",
-    # "QCHYT",
-    # "QCHZ1",
-    # "QCHZ5",
-    # "QCHZ6",
-    # "QCHZ8",
-    # "QCHZH",
+wafer_codes = [
+    "QCHY7",
+    # "QCHWO",
+    # "QCI07",
+    # "QCHZQ",
+    # "QCHXN",
+    # "QCHYL",
+    # "QCHXU",
+    # "QCHZO",
+    # "QCHZM",
+    # "QCHXK",
+    # "QCHXO",
+    # "QCHYV",
+    # "QCHZ9",
+    # "QCHYC",
+    # "QCHYU",
+    # "QCHXC",
+    # "QCHZD",
+    # "QCHZ3",
+    # "QCHYY",
+    # "QCHZC",
+    # "QCHYF",
+    # "QCHZI",
 ]  # List of wafer codes
 
-summaryfile_name = "debug"
+warnings.filterwarnings("ignore")
+
+summaryfile_name = "qchy7"
 
 decoder_file = "QC WAFER_LAYOUT 24Dec.csv"
 # Define the current script's directory
@@ -50,13 +51,61 @@ current_dir = Path(os.getcwd())
 root_dir = current_dir.parents[0]  # Adjust the number based on your folder structure
 # Define the paths to the required subfolders
 file_paths = []
-for wafer_code in files:
+for wafer_code in wafer_codes:
     for file in os.listdir(root_dir / "LIV_Raw_Files"):
         if wafer_code in file and "COD250" in file:
             file_paths.append(root_dir / "LIV_Raw_Files" / file)
+
+# EXPERIMENTAL: URL fetching from GTX
+# Define the URL of the directory containing the files
+directory_url = "https://sprgtxprod02.stni.seagate.com/~gtx/wafer/proc_LIV/data/byProdLot/QC/"
+
+# Fetch the directory listing
+response = requests.get(directory_url, verify=False)
+soup = BeautifulSoup(response.content, "html.parser")
+
+# Find all links in the directory listing
+links = soup.find_all("a")
+
+# Filter the links to find subdirectories that match the wafer codes
+subdirectory_urls = []
+for link in links:
+    href = link.get("href")
+    if href and any(wafer_code in href for wafer_code in wafer_codes):
+        subdirectory_urls.append(directory_url + href)
+
+# Now look inside each subdirectory for the required CSV files
+# Fetches files with COD250 and RAW in the name, with a matching wafer code
+# Also will fetch the most recent csv if there are multiple
+file_urls = []
+for subdirectory_url in subdirectory_urls:
+    response = requests.get(subdirectory_url, verify=False)
+    soup = BeautifulSoup(response.content, "html.parser")
+    links = soup.find_all("a")
+    latest_file = None
+    latest_time = ""
+    for link in links:
+        href = link.get("href")
+        if href and "RAW" in href and "COD250" in href:
+            time_str = href[-18:-4]  # Extract the time string
+            if time_str > latest_time:
+                latest_time = time_str
+                latest_file = subdirectory_url + href
+    if latest_file:
+        file_urls.append(latest_file)
+
 decoder_file_path = root_dir / "decoders" / decoder_file
 cod_summary_file_path = root_dir / "cod_summaries"
 # print(file_paths)
+print(file_urls)
+
+# DEBUG: INPUT LINKS TO OTHER GTX FILES HERE
+# file_urls = [
+#     "https://sprgtxprod02.stni.seagate.com/~gtx/wafer/proc_LIV/data/byProdLot/QC/QCHWQ/LIV_53_QCHWQ_DNS-LIVTKCOD_LCRVCOD250-DNS_RAW20250227044906.CSV",
+#     "https://sprgtxprod02.stni.seagate.com/~gtx/wafer/proc_LIV/data/byProdLot/QC/QCHWQ/LIV_53_QCHWQ_LIVBLTKCOD_COD250-DNS_RAW20250228082707.CSV",
+#     "https://sprgtxprod02.stni.seagate.com/~gtx/wafer/proc_LIV/data/byProdLot/QC/QCHWQ/LIV_53_QCHWQ_LIVBLTKCOD_COD250-DNS_RAW20250311164324.CSV",
+# ]
+# print(file_urls)
 
 # %% [markdown]
 # # Transform Data to Desired Raw Sweep Format
@@ -68,22 +117,17 @@ cod_summary_file_path = root_dir / "cod_summaries"
 # - adds in device coords from decoder file
 # - loops for every csv file chosen, and stores raw_sweep dataframes
 
+
 # %%
-# Transforming Raw File Code
-
-
-def transform_raw_file(file_path, decoder_file_path):
-    # Read the CSV file, skipping the first 19 rows
-    df = pd.read_csv(file_path, skiprows=19)
+def transform_raw_file(file_url, decoder_file_path):
+    # Read the CSV file from the URL, skipping the first 19 rows
+    df = pd.read_csv(file_url, skiprows=19)
     # Read the CSV file again to extract the second row
-    header_df = pd.read_csv(file_path, nrows=2)
+    header_df = pd.read_csv(file_url, nrows=2)
     # Extract the wafer id from the second row
     wafer_id = header_df.iloc[1, 1]
     # Print the wafer id for verification
     print(f"Wafer ID: {wafer_id}")
-    # Get the directory of the file
-    folder = file_path.parent
-    print(f"Directory: {folder}")
     # Get column names
     col_names = df.columns
     # Find columns containing "Vf" or "PD"
@@ -150,16 +194,17 @@ def transform_raw_file(file_path, decoder_file_path):
     return df_raw_sweeps
 
 
-# Calling the code
-warnings.filterwarnings("ignore")
 raw_sweeps_tables = []
 
-for file_path in file_paths:
-    df_raw_sweeps = transform_raw_file(file_path, decoder_file_path)
+warnings.filterwarnings("ignore")
+
+# CALLING THE CODE
+for file_url in file_urls:
+    df_raw_sweeps = transform_raw_file(file_url, decoder_file_path)
     raw_sweeps_tables.append(df_raw_sweeps)
 
-# Display the first 10 rows of the first raw_sweeps table
-raw_sweeps_tables[0].head(10)
+# Display the first 10 rows of the raw_sweeps table
+print(raw_sweeps_tables[0].head(10))
 
 # %% [markdown]
 # # Delta Method COD Algorithm
@@ -397,7 +442,7 @@ for i, df_raw_sweeps in enumerate(raw_sweeps_tables):
     wafer_summary_tables.append(wafer_summary_table)
 
 
-# Concatenate all wafer summary tables into one dataframe
+# Concatenate individual wafer summary tables into one dataframe for all the wafers analysed
 final_wafer_summary_table = pd.concat(wafer_summary_tables, ignore_index=True)
 
 # Save the final wafer summary table to a CSV file
